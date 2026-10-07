@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Football Team Management System | Polyglot Database & XML Integration</title>
+  
+  <!-- Fonts & Styles -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+
+  <!-- ========================================================================= -->
+  <!-- HEADER & TOP NAVIGATION -->
+  <!-- ========================================================================= -->
+  <header class="header">
+    <div class="header-container">
+      <div class="logo-group">
+        <div class="logo-icon">⚽</div>
+        <div class="logo-text">
+          <h1>FootyManager Pro</h1>
+          <p>Polyglot Database System (Mongo + Neo4j)</p>
+        </div>
+      </div>
+
+      <!-- Instant Search Input -->
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Search player name..." />
+      </div>
+
+      <!-- DB Status & Action Nav -->
+      <div class="nav-actions">
+        <div id="mongoStatusPill" class="status-pill emulated">
+          <span class="status-dot emulated"></span> MongoDB: CONNECTING
+        </div>
+        <div id="neo4jStatusPill" class="status-pill emulated">
+          <span class="status-dot emulated"></span> Neo4j: CONNECTING
+        </div>
+
+        <button id="viewPlanBtn" class="btn btn-glass" title="View MongoDB $match and Neo4j Cypher Execution">
+          🔍 Execution Plan
+        </button>
+        <button id="viewGraphBtn" class="btn btn-glass" title="View Neo4j Graph Visualizer">
+          🕸️ Graph View
+        </button>
+        <button id="viewXmlBtn" class="btn btn-primary" title="Inspect Raw Integrated XML Payload">
+          📄 Inspect Raw XML
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================================================= -->
+  <!-- MAIN LAYOUT (E-COMMERCE SIDEBAR + PLAYER GRID) -->
+  <!-- ========================================================================= -->
+  <div class="main-wrapper">
+    
+    <!-- E-COMMERCE SIDEBAR FILTERS -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>🎛️ Search Filters</h2>
+        <button id="resetFiltersBtn" class="btn-reset">Reset All</button>
+      </div>
+
+      <!-- Position Checkboxes Filter -->
+      <div class="filter-section">
+        <div class="filter-title">
+          Position
+        </div>
+        <div class="checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="position" value="Forward" />
+            <span>Forward</span>
+            <span class="badge-count">FWD</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="position" value="Midfielder" />
+            <span>Midfielder</span>
+            <span class="badge-count">MID</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="position" value="Defender" />
+            <span>Defender</span>
+            <span class="badge-count">DEF</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="position" value="Goalkeeper" />
+            <span>Goalkeeper</span>
+            <span class="badge-count">GK</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Nationality Checkboxes Filter -->
+      <div class="filter-section">
+        <div class="filter-title">
+          Nationality
+        </div>
+        <div class="checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="nationality" value="England" />
+            <span>England</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="nationality" value="Spain" />
+            <span>Spain</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="nationality" value="France" />
+            <span>France</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="nationality" value="Brazil" />
+            <span>Brazil</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="nationality" value="Germany" />
+            <span>Germany</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="nationality" value="Belgium" />
+            <span>Belgium</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" class="filter-checkbox" name="nationality" value="Norway" />
+            <span>Norway</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Age Range Filter -->
+      <div class="filter-section">
+        <div class="filter-title">
+          Age Range (Years)
+        </div>
+        <div class="range-group">
+          <input type="number" id="minAgeInput" placeholder="Min (17)" min="17" max="40" />
+          <span style="color: var(--text-muted)">to</span>
+          <input type="number" id="maxAgeInput" placeholder="Max (35)" min="17" max="40" />
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- CONTENT AREA -->
+    <main class="content-area">
+      
+      <!-- TOP TOOLBAR: RESULTS COUNT & SORT DROPDOWN -->
+      <div class="top-toolbar">
+        <div class="results-info">
+          <div id="resultsCount" class="results-count">Showing <span>0</span> Players</div>
+        </div>
+
+        <div class="sort-group">
+          <label for="sortSelect">Sort By:</label>
+          <select id="sortSelect">
+            <option value="marketValue_desc">Market Value (High to Low)</option>
+            <option value="marketValue_asc">Market Value (Low to High)</option>
+            <option value="name_asc">Name (A to Z)</option>
+            <option value="name_desc">Name (Z to A)</option>
+            <option value="age_asc">Age (Youngest First)</option>
+            <option value="age_desc">Age (Oldest First)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- CARDS GRID -->
+      <div id="playersGrid" class="players-grid">
+        <!-- Dynamically rendered from parsed XML payload -->
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL: XML & QUERY INSPECTOR -->
+  <!-- ========================================================================= -->
+  <div id="xmlModal" class="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 id="xmlModalTitle">📄 Integrated XML Payload</h3>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <button class="btn btn-glass" onclick="XMLViewer.copyToClipboard()">📋 Copy</button>
+          <button class="btn-close">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <pre id="xmlModalCode" class="code-block"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL: GRAPH VISUALIZER -->
+  <!-- ========================================================================= -->
+  <div id="graphModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 950px;">
+      <div class="modal-header">
+        <h3>🕸️ Neo4j Graph Schema & Relationship Visualizer</h3>
+        <button class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <canvas id="graphCanvas"></canvas>
+        <div style="display: flex; gap: 1.5rem; justify-content: center; margin-top: 1rem; font-size: 0.82rem; color: var(--text-muted);">
+          <span><strong style="color:#0284c7;">●</strong> Player Node</span>
+          <span><strong style="color:#0f172a;">●</strong> Team Node</span>
+          <span><strong style="color:#64748b;">●</strong> Manager Node</span>
+          <span><span style="color:#cbd5e1;">—</span> :PLAYS_FOR / :MANAGES</span>
+          <span><span style="color:#94a3b8;">- -</span> :RIVAL_OF</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- JavaScript Modules -->
+  <script src="/js/xmlViewer.js"></script>
+  <script src="/js/graphVisualizer.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
