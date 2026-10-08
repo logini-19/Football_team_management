@@ -30,6 +30,7 @@ const {
 
 const { 
   getPlayerRelationships, 
+  getFilteredGraphData,
   getFullGraphData,
   syncCreatePlayerGraph,
   syncUpdatePlayerGraph,
@@ -372,7 +373,22 @@ router.get('/db-status', (req, res) => {
  */
 router.get('/graph', async (req, res) => {
   try {
-    const graphData = await getFullGraphData();
+    const filters = {
+      positions: req.query.positions ? req.query.positions.split(',').filter(Boolean) : [],
+      nationalities: req.query.nationalities ? req.query.nationalities.split(',').filter(Boolean) : [],
+      minAge: req.query.minAge,
+      maxAge: req.query.maxAge,
+      search: req.query.search,
+      sortBy: req.query.sortBy || 'marketValue_desc'
+    };
+
+    const graphData = Object.values(filters).some(value => {
+      if (Array.isArray(value)) return value.length > 0;
+      return value !== undefined && value !== null && value !== '';
+    })
+      ? await getFilteredGraphData(filters)
+      : await getFullGraphData();
+
     res.json(graphData);
   } catch (err) {
     res.status(500).json({ error: err.message });

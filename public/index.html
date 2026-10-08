@@ -209,6 +209,10 @@
       </div>
       <div class="modal-body">
         <canvas id="graphCanvas"></canvas>
+        <div id="graphNodeDetails" style="margin-top: 1rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(248, 250, 252, 0.9); min-height: 90px; color: var(--text-color); display: none;">
+          <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.5rem;">Selected Node</div>
+          <div id="graphNodeDetailsContent"></div>
+        </div>
         <div style="display: flex; gap: 1.5rem; justify-content: center; margin-top: 1rem; font-size: 0.82rem; color: var(--text-muted);">
           <span><strong style="color:#0284c7;">●</strong> Player Node</span>
           <span><strong style="color:#0f172a;">●</strong> Team Node</span>
