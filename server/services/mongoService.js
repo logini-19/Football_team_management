@@ -116,6 +116,185 @@ async function getFilteredPlayers(filters = {}) {
 }
 
 /**
+ * Fetch a single player document from MongoDB by playerId
+ */
+async function getPlayerById(playerId) {
+  const status = getDbStatus();
+  const filter = { playerId };
+
+  if (status.mongo.connected) {
+    const db = getMongoDb();
+    const player = await db.collection('players').findOne(filter);
+    return {
+      player,
+      mongoQuery: {
+        operation: 'findOne',
+        collection: 'players',
+        filter
+      }
+    };
+  } else {
+    const store = getInMemoryStore();
+    const player = store.players.find(p => p.playerId === playerId) || null;
+    return {
+      player,
+      mongoQuery: {
+        operation: 'findOne',
+        collection: 'players',
+        filter,
+        mode: 'emulated'
+      }
+    };
+  }
+}
+
+/**
+ * Create a new player document in MongoDB
+ */
+async function createPlayer(playerData) {
+  const status = getDbStatus();
+
+  // Construct sanitized document
+  const document = {
+    playerId: String(playerData.playerId).trim(),
+    name: String(playerData.name).trim(),
+    age: Number(playerData.age),
+    marketValue: Number(playerData.marketValue),
+    position: String(playerData.position).trim(),
+    nationality: String(playerData.nationality).trim(),
+    bio: String(playerData.bio || '').trim(),
+    preferredFoot: String(playerData.preferredFoot || 'Right').trim(),
+    shirtNumber: Number(playerData.shirtNumber) || 10,
+    stats: {
+      goals: Number(playerData.stats?.goals || 0),
+      assists: Number(playerData.stats?.assists || 0),
+      appearances: Number(playerData.stats?.appearances || 0),
+      rating: Number(playerData.stats?.rating || 7.0),
+      passAccuracy: Number(playerData.stats?.passAccuracy || 80.0)
+    }
+  };
+
+  // Check if player ID already exists
+  const existing = await getPlayerById(document.playerId);
+  if (existing.player) {
+    const err = new Error(`Player with ID '${document.playerId}' already exists.`);
+    err.code = 'DUPLICATE_ID';
+    throw err;
+  }
+
+  if (status.mongo.connected) {
+    const db = getMongoDb();
+    await db.collection('players').insertOne(document);
+  } else {
+    const store = getInMemoryStore();
+    store.players.push(document);
+  }
+
+  return {
+    player: document,
+    mongoQuery: {
+      operation: 'insertOne',
+      collection: 'players',
+      document
+    }
+  };
+}
+
+/**
+ * Update an existing player document in MongoDB
+ */
+async function updatePlayer(playerId, updateData) {
+  const status = getDbStatus();
+  const filter = { playerId };
+
+  // Sanitize fields to set (prevent changing playerId or _id)
+  const $set = {};
+  if (updateData.name !== undefined) $set.name = String(updateData.name).trim();
+  if (updateData.age !== undefined) $set.age = Number(updateData.age);
+  if (updateData.marketValue !== undefined) $set.marketValue = Number(updateData.marketValue);
+  if (updateData.position !== undefined) $set.position = String(updateData.position).trim();
+  if (updateData.nationality !== undefined) $set.nationality = String(updateData.nationality).trim();
+  if (updateData.bio !== undefined) $set.bio = String(updateData.bio).trim();
+  if (updateData.preferredFoot !== undefined) $set.preferredFoot = String(updateData.preferredFoot).trim();
+  if (updateData.shirtNumber !== undefined) $set.shirtNumber = Number(updateData.shirtNumber);
+  
+  if (updateData.stats) {
+    $set.stats = {
+      goals: Number(updateData.stats.goals ?? 0),
+      assists: Number(updateData.stats.assists ?? 0),
+      appearances: Number(updateData.stats.appearances ?? 0),
+      rating: Number(updateData.stats.rating ?? 7.0),
+      passAccuracy: Number(updateData.stats.passAccuracy ?? 80.0)
+    };
+  }
+
+  if (status.mongo.connected) {
+    const db = getMongoDb();
+    const result = await db.collection('players').updateOne(filter, { $set });
+    if (result.matchedCount === 0) return null;
+
+    const updatedPlayer = await db.collection('players').findOne(filter);
+    return {
+      player: updatedPlayer,
+      mongoQuery: {
+        operation: 'updateOne',
+        collection: 'players',
+        filter,
+        update: { $set }
+      }
+    };
+  } else {
+    const store = getInMemoryStore();
+    const playerIndex = store.players.findIndex(p => p.playerId === playerId);
+    if (playerIndex === -1) return null;
+
+    store.players[playerIndex] = {
+      ...store.players[playerIndex],
+      ...$set
+    };
+
+    return {
+      player: store.players[playerIndex],
+      mongoQuery: {
+        operation: 'updateOne',
+        collection: 'players',
+        filter,
+        update: { $set },
+        mode: 'emulated'
+      }
+    };
+  }
+}
+
+/**
+ * Delete a player document from MongoDB
+ */
+async function deletePlayer(playerId) {
+  const status = getDbStatus();
+  const filter = { playerId };
+
+  const existing = await getPlayerById(playerId);
+  if (!existing.player) return null;
+
+  if (status.mongo.connected) {
+    const db = getMongoDb();
+    await db.collection('players').deleteOne(filter);
+  } else {
+    const store = getInMemoryStore();
+    store.players = store.players.filter(p => p.playerId !== playerId);
+  }
+
+  return {
+    deletedPlayerId: playerId,
+    mongoQuery: {
+      operation: 'deleteOne',
+      collection: 'players',
+      filter
+    }
+  };
+}
+
+/**
  * Fetch a single team document from MongoDB by teamId
  */
 async function getTeamById(teamId) {
@@ -145,6 +324,10 @@ async function getAllTeams() {
 
 module.exports = {
   getFilteredPlayers,
+  getPlayerById,
+  createPlayer,
+  updatePlayer,
+  deletePlayer,
   getTeamById,
   getAllTeams
 };

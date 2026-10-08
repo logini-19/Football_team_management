@@ -18,10 +18,41 @@
 
 const express = require('express');
 const router = express.Router();
-const { getFilteredPlayers, getTeamById, getAllTeams } = require('../services/mongoService');
-const { getPlayerRelationships, getFullGraphData } = require('../services/neo4jService');
+const { 
+  getFilteredPlayers, 
+  getPlayerById, 
+  createPlayer, 
+  updatePlayer, 
+  deletePlayer, 
+  getTeamById, 
+  getAllTeams 
+} = require('../services/mongoService');
+
+const { 
+  getPlayerRelationships, 
+  getFullGraphData,
+  syncCreatePlayerGraph,
+  syncUpdatePlayerGraph,
+  syncDeletePlayerGraph
+} = require('../services/neo4jService');
+
 const { buildPlayersXml } = require('../services/xmlService');
-const { getDbStatus, initMongo, initNeo4j, seedNeo4jGraph, getNeo4jDriver } = require('../config/db');
+const { getDbStatus, initMongo, initNeo4j } = require('../config/db');
+
+/**
+ * Input sanitization helper to strip keys containing $ or .
+ */
+function sanitizePayload(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  for (const key of Object.keys(obj)) {
+    if (key.startsWith('$') || key.includes('.')) {
+      delete obj[key];
+    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+      sanitizePayload(obj[key]);
+    }
+  }
+  return obj;
+}
 
 /**
  * =====================================================================================
@@ -141,6 +172,191 @@ router.get('/search-players', async (req, res) => {
         <message>${error.message}</message>
       </error_response>
     `);
+  }
+});
+
+/**
+ * =====================================================================================
+ * REST API CRUD ENDPOINTS FOR PLAYERS (MONGODB + NEO4J POLYGLOT CONSISTENCY)
+ * =====================================================================================
+ */
+
+/**
+ * READ SINGLE PLAYER: GET /api/players/:playerId
+ * Uses MongoDB findOne() + Neo4j Cypher MATCH for graph relationships
+ */
+router.get('/players/:playerId', async (req, res) => {
+  try {
+    const playerId = String(req.params.playerId).trim();
+    
+    // 1. MongoDB findOne()
+    const { player, mongoQuery } = await getPlayerById(playerId);
+    if (!player) {
+      return res.status(404).json({
+        success: false,
+        error: `Player with ID '${playerId}' not found.`
+      });
+    }
+
+    // 2. Neo4j Cypher MATCH for graph relationships
+    const { relationshipMap, cypherQuery, params } = await getPlayerRelationships([playerId]);
+
+    return res.json({
+      success: true,
+      player: {
+        ...player,
+        relationships: relationshipMap[playerId] || null
+      },
+      polyglotMetadata: {
+        dbStatus: getDbStatus(),
+        mongoExecution: mongoQuery,
+        neo4jExecution: { cypherQuery, params }
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching player by ID:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * CREATE PLAYER: POST /api/players
+ * Uses MongoDB insertOne() + Neo4j MERGE node and :PLAYS_FOR relationship
+ */
+router.post('/players', async (req, res) => {
+  try {
+    const body = sanitizePayload(req.body);
+    
+    // Validation
+    const required = ['playerId', 'name', 'age', 'position', 'nationality', 'marketValue'];
+    const missing = required.filter(field => body[field] === undefined || body[field] === '');
+    if (missing.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Missing required fields: ${missing.join(', ')}`
+      });
+    }
+
+    // 1. MongoDB insertOne()
+    const { player, mongoQuery } = await createPlayer(body);
+
+    // 2. Neo4j Graph Synchronization
+    const teamId = body.teamId || null;
+    const contractInfo = {
+      salary: body.salary,
+      contractEnd: body.contractEnd,
+      jerseyNumber: body.shirtNumber,
+      role: body.role
+    };
+    const { cypherQuery, params } = await syncCreatePlayerGraph(player, teamId, contractInfo);
+
+    return res.status(201).json({
+      success: true,
+      message: `Player '${player.name}' (ID: ${player.playerId}) successfully created!`,
+      player,
+      polyglotMetadata: {
+        dbStatus: getDbStatus(),
+        mongoExecution: mongoQuery,
+        neo4jExecution: { cypherQuery, params }
+      }
+    });
+
+  } catch (err) {
+    console.error('Error creating player:', err);
+    if (err.code === 'DUPLICATE_ID') {
+      return res.status(409).json({ success: false, error: err.message });
+    }
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * UPDATE PLAYER: PUT /api/players/:playerId
+ * Uses MongoDB updateOne() + Neo4j SET properties and :PLAYS_FOR relationship update
+ */
+router.put('/players/:playerId', async (req, res) => {
+  try {
+    const playerId = String(req.params.playerId).trim();
+    const body = sanitizePayload(req.body);
+
+    // Prevent modifying playerId
+    delete body.playerId;
+    delete body._id;
+
+    // 1. MongoDB updateOne()
+    const updateResult = await updatePlayer(playerId, body);
+    if (!updateResult) {
+      return res.status(404).json({
+        success: false,
+        error: `Player with ID '${playerId}' not found.`
+      });
+    }
+
+    const { player, mongoQuery } = updateResult;
+
+    // 2. Neo4j Graph Synchronization
+    const teamId = body.teamId || null;
+    const contractInfo = {
+      salary: body.salary,
+      contractEnd: body.contractEnd,
+      jerseyNumber: body.shirtNumber,
+      role: body.role
+    };
+    const { cypherQuery, params } = await syncUpdatePlayerGraph(playerId, body, teamId, contractInfo);
+
+    return res.json({
+      success: true,
+      message: `Player '${player.name}' (ID: ${playerId}) successfully updated!`,
+      player,
+      polyglotMetadata: {
+        dbStatus: getDbStatus(),
+        mongoExecution: mongoQuery,
+        neo4jExecution: { cypherQuery, params }
+      }
+    });
+
+  } catch (err) {
+    console.error('Error updating player:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE PLAYER: DELETE /api/players/:playerId
+ * Uses MongoDB deleteOne() + Neo4j DETACH DELETE (:Player)
+ */
+router.delete('/players/:playerId', async (req, res) => {
+  try {
+    const playerId = String(req.params.playerId).trim();
+
+    // 1. MongoDB deleteOne()
+    const deleteResult = await deletePlayer(playerId);
+    if (!deleteResult) {
+      return res.status(404).json({
+        success: false,
+        error: `Player with ID '${playerId}' not found.`
+      });
+    }
+
+    const { mongoQuery } = deleteResult;
+
+    // 2. Neo4j Graph Synchronization (DETACH DELETE)
+    const { cypherQuery, params } = await syncDeletePlayerGraph(playerId);
+
+    return res.json({
+      success: true,
+      message: `Player ID '${playerId}' successfully deleted from MongoDB & Neo4j!`,
+      deletedPlayerId: playerId,
+      polyglotMetadata: {
+        dbStatus: getDbStatus(),
+        mongoExecution: mongoQuery,
+        neo4jExecution: { cypherQuery, params }
+      }
+    });
+
+  } catch (err) {
+    console.error('Error deleting player:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

@@ -203,7 +203,172 @@ async function getFullGraphData() {
   }
 }
 
+/**
+ * Synchronize Neo4j graph when creating a player
+ */
+async function syncCreatePlayerGraph(playerData, teamId = null, contractInfo = {}) {
+  const status = getDbStatus();
+  const cypherQuery = `
+    MERGE (p:Player {id: $playerId})
+    SET p.name = $name, p.position = $position, p.nationality = $nationality
+    WITH p
+    OPTIONAL MATCH (t:Team {id: $teamId})
+    FOREACH (ignore IN CASE WHEN t IS NOT NULL AND $teamId IS NOT NULL THEN [1] ELSE [] END |
+      MERGE (p)-[r:PLAYS_FOR]->(t)
+      SET r.salary = $salary, r.contract_end = $contractEnd, r.jersey_number = $jerseyNumber, r.role = $role
+    )
+    RETURN p
+  `.trim();
+
+  const params = {
+    playerId: playerData.playerId,
+    name: playerData.name,
+    position: playerData.position,
+    nationality: playerData.nationality,
+    teamId: teamId || null,
+    salary: Number(contractInfo.salary || 10000000),
+    contractEnd: String(contractInfo.contractEnd || '2028-06-30'),
+    jerseyNumber: Number(contractInfo.jerseyNumber || playerData.shirtNumber || 10),
+    role: String(contractInfo.role || 'First Team Player')
+  };
+
+  if (status.neo4j.connected) {
+    const driver = getNeo4jDriver();
+    const session = driver.session();
+    try {
+      await session.run(cypherQuery, params);
+    } finally {
+      await session.close();
+    }
+  } else {
+    // In-Memory Graph Synchronization
+    const store = getInMemoryStore();
+    const existingPf = store.playsFor.find(pf => pf.playerId === playerData.playerId);
+    if (teamId) {
+      if (existingPf) {
+        existingPf.teamId = teamId;
+        existingPf.salary = params.salary;
+        existingPf.contract_end = params.contractEnd;
+        existingPf.jersey_number = params.jerseyNumber;
+        existingPf.role = params.role;
+      } else {
+        store.playsFor.push({
+          playerId: playerData.playerId,
+          teamId,
+          salary: params.salary,
+          contract_end: params.contractEnd,
+          jersey_number: params.jerseyNumber,
+          role: params.role
+        });
+      }
+    }
+  }
+
+  return { cypherQuery, params };
+}
+
+/**
+ * Synchronize Neo4j graph when updating a player
+ */
+async function syncUpdatePlayerGraph(playerId, updateData, teamId = null, contractInfo = {}) {
+  const status = getDbStatus();
+  const cypherQuery = `
+    MATCH (p:Player {id: $playerId})
+    SET p.name = COALESCE($name, p.name),
+        p.position = COALESCE($position, p.position),
+        p.nationality = COALESCE($nationality, p.nationality)
+    WITH p
+    OPTIONAL MATCH (p)-[oldR:PLAYS_FOR]->(:Team)
+    OPTIONAL MATCH (newT:Team {id: $teamId})
+    FOREACH (ignore IN CASE WHEN newT IS NOT NULL THEN [1] ELSE [] END |
+      DELETE oldR
+      MERGE (p)-[r:PLAYS_FOR]->(newT)
+      SET r.salary = COALESCE($salary, r.salary),
+          r.contract_end = COALESCE($contractEnd, r.contract_end),
+          r.jersey_number = COALESCE($jerseyNumber, r.jersey_number),
+          r.role = COALESCE($role, r.role)
+    )
+    RETURN p
+  `.trim();
+
+  const params = {
+    playerId,
+    name: updateData.name || null,
+    position: updateData.position || null,
+    nationality: updateData.nationality || null,
+    teamId: teamId || null,
+    salary: contractInfo.salary ? Number(contractInfo.salary) : null,
+    contractEnd: contractInfo.contractEnd || null,
+    jerseyNumber: contractInfo.jerseyNumber ? Number(contractInfo.jerseyNumber) : null,
+    role: contractInfo.role || null
+  };
+
+  if (status.neo4j.connected) {
+    const driver = getNeo4jDriver();
+    const session = driver.session();
+    try {
+      await session.run(cypherQuery, params);
+    } finally {
+      await session.close();
+    }
+  } else {
+    // In-Memory Graph Sync
+    const store = getInMemoryStore();
+    if (teamId) {
+      let pf = store.playsFor.find(p => p.playerId === playerId);
+      if (pf) {
+        pf.teamId = teamId;
+        if (contractInfo.salary) pf.salary = Number(contractInfo.salary);
+        if (contractInfo.contractEnd) pf.contract_end = contractInfo.contractEnd;
+      } else {
+        store.playsFor.push({
+          playerId,
+          teamId,
+          salary: Number(contractInfo.salary || 10000000),
+          contract_end: String(contractInfo.contractEnd || '2028-06-30'),
+          jersey_number: Number(updateData.shirtNumber || 10),
+          role: 'First Team Player'
+        });
+      }
+    }
+  }
+
+  return { cypherQuery, params };
+}
+
+/**
+ * Synchronize Neo4j graph when deleting a player
+ */
+async function syncDeletePlayerGraph(playerId) {
+  const status = getDbStatus();
+  const cypherQuery = `
+    MATCH (p:Player {id: $playerId})
+    DETACH DELETE p
+  `.trim();
+
+  const params = { playerId };
+
+  if (status.neo4j.connected) {
+    const driver = getNeo4jDriver();
+    const session = driver.session();
+    try {
+      await session.run(cypherQuery, params);
+    } finally {
+      await session.close();
+    }
+  } else {
+    // In-Memory Graph Sync
+    const store = getInMemoryStore();
+    store.playsFor = store.playsFor.filter(pf => pf.playerId !== playerId);
+  }
+
+  return { cypherQuery, params };
+}
+
 module.exports = {
   getPlayerRelationships,
-  getFullGraphData
+  getFullGraphData,
+  syncCreatePlayerGraph,
+  syncUpdatePlayerGraph,
+  syncDeletePlayerGraph
 };
