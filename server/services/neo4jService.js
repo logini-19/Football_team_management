@@ -7,6 +7,7 @@
  */
 
 const { getNeo4jDriver, getDbStatus, getInMemoryStore } = require('../config/db');
+const { getFilteredPlayers } = require('./mongoService');
 
 /**
  * Fetch relationship graph data for a list of player IDs using Cypher query.
@@ -133,6 +134,89 @@ async function getPlayerRelationships(playerIds = []) {
 /**
  * Fetch full graph structure for visualizer (Nodes + Links)
  */
+async function getFilteredGraphData(filters = {}) {
+  const { players = [] } = await getFilteredPlayers(filters);
+  const playerIds = players.map(p => p.playerId);
+
+  if (!playerIds.length) {
+    return { nodes: [], links: [] };
+  }
+
+  const { relationshipMap } = await getPlayerRelationships(playerIds);
+  const nodesMap = new Map();
+  const links = [];
+
+  players.forEach(player => {
+    const rel = relationshipMap[player.playerId];
+    nodesMap.set(player.playerId, {
+      id: player.playerId,
+      label: player.name,
+      type: 'Player',
+      subtitle: `${player.position} • ${player.nationality}`
+    });
+
+    if (!rel) return;
+
+    if (rel.team && rel.team.teamId) {
+      nodesMap.set(rel.team.teamId, {
+        id: rel.team.teamId,
+        label: rel.team.teamName,
+        type: 'Team',
+        subtitle: rel.team.stadium || 'Club'
+      });
+
+      const salary = Number(rel.contract?.salary || 0);
+      links.push({
+        source: player.playerId,
+        target: rel.team.teamId,
+        label: 'PLAYS_FOR',
+        details: salary ? `Salary: €${(salary / 1e6).toFixed(1)}M` : 'Player Contract'
+      });
+    }
+
+    if (rel.manager && rel.manager.managerId) {
+      nodesMap.set(rel.manager.managerId, {
+        id: rel.manager.managerId,
+        label: rel.manager.name,
+        type: 'Manager',
+        subtitle: rel.manager.winRate ? `${rel.manager.winRate}% Win Rate` : 'Manager'
+      });
+
+      if (rel.team && rel.team.teamId) {
+        links.push({
+          source: rel.manager.managerId,
+          target: rel.team.teamId,
+          label: 'MANAGES',
+          details: rel.manager.winRate ? `Win Rate: ${rel.manager.winRate}%` : 'Manager Relationship'
+        });
+      }
+    }
+
+    if (rel.rivals) {
+      rel.rivals.forEach(rival => {
+        if (!rival || !rival.rivalId) return;
+        nodesMap.set(rival.rivalId, {
+          id: rival.rivalId,
+          label: rival.rivalName,
+          type: 'Team',
+          subtitle: rival.derbyName || 'Rival'
+        });
+
+        if (rel.team && rel.team.teamId) {
+          links.push({
+            source: rel.team.teamId,
+            target: rival.rivalId,
+            label: 'RIVAL_OF',
+            details: rival.derbyName || 'Rivalry'
+          });
+        }
+      });
+    }
+  });
+
+  return { nodes: Array.from(nodesMap.values()), links };
+}
+
 async function getFullGraphData() {
   const status = getDbStatus();
   if (status.neo4j.connected) {
@@ -367,6 +451,7 @@ async function syncDeletePlayerGraph(playerId) {
 
 module.exports = {
   getPlayerRelationships,
+  getFilteredGraphData,
   getFullGraphData,
   syncCreatePlayerGraph,
   syncUpdatePlayerGraph,
